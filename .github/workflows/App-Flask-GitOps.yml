@@ -13,21 +13,16 @@
 name: App Deploy Flask - GitOps
 
 on: 
+  push:
+    branches:
+      - main
+    paths:
+      - workloads/flask/**
   workflow_dispatch:
-    inputs:
-      ACRNAME:
-        description: 'The Name of the ACR resource'
-        required: true
-        type: string
-      APPNAME:
-        description: 'The Name of the Application to deploy'
-        default: "flask"
-        required: true
-        type: string
-      ENVIRONMENT:
-        description: 'A GitHub Environment to pull action secrets from'
-        required: true
-        type: environment
+
+env:
+  ACRNAME: "hseungh" # 변경
+  APPNAME: "flask"
 
 permissions:
       id-token: write
@@ -36,18 +31,15 @@ permissions:
 jobs:
   BuildPush:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.Environment }}
+    environment: prod
     steps:
-    
+
       # Get application code from repo
       - name: Get application code from repo
-        uses: actions/checkout@main
-        with:
-          repository: ${{ inputs.AppRepo}}
-          #ref: ${{ inputs.AppRepoRef}}
+        uses: actions/checkout@v4
       
       # Logs into your Azure subscription
-      - uses: azure/login@v1
+      - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -57,8 +49,8 @@ jobs:
       - name: Connect to Azure Container Registry (ACR)
         id: acrconnect
         run: |
-          echo "Retrieving access token from ${{ inputs.ACRNAME}}"
-          TOKEN=$(az acr login -n ${{ inputs.ACRNAME}} --expose-token)
+          echo "Retrieving access token from ${{ env.ACRNAME }}"
+          TOKEN=$(az acr login -n ${{ env.ACRNAME }} --expose-token)
 
           if [ -z "$TOKEN" ]
           then
@@ -78,29 +70,29 @@ jobs:
       # Builds and Pushes the container image to the Azure Container Registry (ACR)
       - name: Container build and push to a Azure Container Registry (ACR)
         env:
-          APPNAME: "${{ inputs.APPNAME }}"
+          APPNAME: "${{ env.APPNAME }}"
         run: |
           cd "workloads/$APPNAME"
-          docker build . -t ${{ inputs.ACRNAME }}.azurecr.io/${{ inputs.APPNAME }}:${{ github.run_number }}
-          docker push ${{ inputs.ACRNAME }}.azurecr.io/${{ inputs.APPNAME }}:${{ github.run_number }}
+          docker build . -t ${{ env.ACRNAME }}.azurecr.io/${{ env.APPNAME }}:${{ github.run_number }}
+          docker push ${{ env.ACRNAME }}.azurecr.io/${{ env.APPNAME }}:${{ github.run_number }}
 
   Update-K8s-Manifests:
     name: Update K8s Deployment Manifest with Image Version
     needs: BuildPush
-    environment: ${{ inputs.Environment }}
+    environment: prod
     runs-on: ubuntu-latest
     steps:
 
     # Checks out the baseline repository
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - name: Update image name in manifest file
-      uses: azure/powershell@v1
+      uses: azure/powershell@v2
       with:
         inlineScript: |
           $line = Get-Content workloads/flask/deployment.yaml | Select-String image: | Select-Object -ExpandProperty Line
           $content = Get-Content workloads/flask/deployment.yaml
-          $content | ForEach-Object {$_ -replace $line,"        image: ${{ inputs.ACRNAME }}.azurecr.io/${{ inputs.APPNAME }}:${{ github.run_number }}"} | Set-Content workloads/flask/deployment.yaml
+          $content | ForEach-Object {$_ -replace $line,"        image: ${{ env.ACRNAME }}.azurecr.io/${{ env.APPNAME }}:${{ github.run_number }}"} | Set-Content workloads/flask/deployment.yaml
         azPSVersion: "latest"
     
     - name: Commit changes in manifest to repo
